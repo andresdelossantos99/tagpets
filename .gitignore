@@ -19,8 +19,7 @@ build/
 # ---- Prisma ----
 # Los archivos de esquema y migraciones SÍ se versionan.
 # Solo se ignora el motor generado localmente, si aplica.
-prisma/generated/
-
+backend/src/generated/prisma/
 # ---- Variables de entorno ----
 .env
 .env.*
