@@ -9,6 +9,17 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { PublicProductsQueryDto } from './dto/public-products-query.dto';
 import { AdminProductsQueryDto } from './dto/admin-products-query.dto';
+import { CreateProductImageDto } from './dto/create-product-image.dto';
+import { UpdateProductImageDto } from './dto/update-product-image.dto';
+
+const PRODUCT_IMAGE_SELECT: Prisma.ProductImageSelect = {
+  id: true,
+  productId: true,
+  url: true,
+  altText: true,
+  sortOrder: true,
+  createdAt: true,
+};
 
 const PRODUCT_WITH_CATEGORY_SELECT: Prisma.ProductSelect = {
   id: true,
@@ -33,6 +44,10 @@ const PRODUCT_WITH_CATEGORY_SELECT: Prisma.ProductSelect = {
       name: true,
       slug: true,
     },
+  },
+  images: {
+    select: PRODUCT_IMAGE_SELECT,
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
   },
 };
 
@@ -219,6 +234,61 @@ export class ProductsService {
     }
   }
 
+  async addImage(productId: string, dto: CreateProductImageDto) {
+    await this.ensureProductExists(productId);
+
+    return this.prisma.productImage.create({
+      data: {
+        productId,
+        url: dto.url,
+        altText: dto.altText,
+        sortOrder: dto.sortOrder,
+      },
+      select: PRODUCT_IMAGE_SELECT,
+    });
+  }
+
+  async updateImage(
+    productId: string,
+    imageId: string,
+    dto: UpdateProductImageDto,
+  ) {
+    await this.ensureImageBelongsToProduct(productId, imageId);
+
+    try {
+      return await this.prisma.productImage.update({
+        where: { id: imageId },
+        data: {
+          url: dto.url,
+          altText: dto.altText,
+          sortOrder: dto.sortOrder,
+        },
+        select: PRODUCT_IMAGE_SELECT,
+      });
+    } catch (error) {
+      if (this.isRecordNotFound(error)) {
+        throw new NotFoundException(`Imagen ${imageId} no encontrada`);
+      }
+      throw error;
+    }
+  }
+
+  async deleteImage(productId: string, imageId: string) {
+    await this.ensureImageBelongsToProduct(productId, imageId);
+
+    try {
+      return await this.prisma.productImage.delete({
+        where: { id: imageId },
+        select: PRODUCT_IMAGE_SELECT,
+      });
+    } catch (error) {
+      if (this.isRecordNotFound(error)) {
+        throw new NotFoundException(`Imagen ${imageId} no encontrada`);
+      }
+      throw error;
+    }
+  }
+
   private async ensureCategoryExists(categoryId: string): Promise<void> {
     const category = await this.prisma.category.findUnique({
       where: { id: categoryId },
@@ -226,6 +296,31 @@ export class ProductsService {
 
     if (!category) {
       throw new NotFoundException('La categoría indicada no existe');
+    }
+  }
+
+  private async ensureProductExists(productId: string): Promise<void> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Producto ${productId} no encontrado`);
+    }
+  }
+
+  private async ensureImageBelongsToProduct(
+    productId: string,
+    imageId: string,
+  ): Promise<void> {
+    const image = await this.prisma.productImage.findFirst({
+      where: { id: imageId, productId },
+    });
+
+    if (!image) {
+      throw new NotFoundException(
+        `Imagen ${imageId} no encontrada para el producto ${productId}`,
+      );
     }
   }
 

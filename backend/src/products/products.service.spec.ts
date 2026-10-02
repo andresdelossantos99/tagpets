@@ -16,12 +16,19 @@ describe('ProductsService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
     },
     category: {
       findUnique: jest.fn(),
+    },
+    productImage: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
     },
   };
 
@@ -46,6 +53,8 @@ describe('ProductsService', () => {
 
     service = moduleRef.get(ProductsService);
   });
+
+  // ---------- Etapa 4A (sin cambios) ----------
 
   it('el listado público siempre filtra active=true', async () => {
     prismaMock.product.findMany.mockResolvedValue([]);
@@ -168,6 +177,163 @@ describe('ProductsService', () => {
     prismaMock.product.update.mockRejectedValue(error);
 
     await expect(service.softDelete('id-inexistente')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  // ---------- Etapa 4B (nuevos) ----------
+
+  it('el select de Product incluye images ordenadas por sortOrder, createdAt e id', async () => {
+    prismaMock.product.findMany.mockResolvedValue([]);
+    prismaMock.product.count.mockResolvedValue(0);
+
+    await service.findPublicList({ page: 1, limit: 12 });
+
+    const [findManyArgs] = prismaMock.product.findMany.mock.calls[0];
+
+    expect(findManyArgs.select.images).toEqual({
+      select: {
+        id: true,
+        productId: true,
+        url: true,
+        altText: true,
+        sortOrder: true,
+        createdAt: true,
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+  });
+
+  it('addImage comprueba que el producto exista y crea la imagen', async () => {
+    prismaMock.product.findUnique.mockResolvedValue({ id: 'prod-1' });
+    const created = {
+      id: 'img-1',
+      productId: 'prod-1',
+      url: 'https://example.com/a.jpg',
+      altText: 'Foto',
+      sortOrder: 0,
+      createdAt: new Date(),
+    };
+    prismaMock.productImage.create.mockResolvedValue(created);
+
+    const result = await service.addImage('prod-1', {
+      url: 'https://example.com/a.jpg',
+      altText: 'Foto',
+    });
+
+    expect(result).toEqual(created);
+    expect(prismaMock.product.findUnique).toHaveBeenCalledWith({
+      where: { id: 'prod-1' },
+    });
+    expect(prismaMock.productImage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          productId: 'prod-1',
+          url: 'https://example.com/a.jpg',
+          altText: 'Foto',
+          sortOrder: undefined,
+        },
+      }),
+    );
+  });
+
+  it('addImage lanza NotFoundException si el producto no existe y no crea la imagen', async () => {
+    prismaMock.product.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.addImage('prod-inexistente', {
+        url: 'https://example.com/a.jpg',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prismaMock.productImage.create).not.toHaveBeenCalled();
+  });
+
+  it('updateImage busca la imagen por imageId y productId antes de actualizar', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue({
+      id: 'img-1',
+      productId: 'prod-1',
+    });
+    prismaMock.productImage.update.mockResolvedValue({
+      id: 'img-1',
+      productId: 'prod-1',
+      url: 'https://example.com/b.jpg',
+    });
+
+    await service.updateImage('prod-1', 'img-1', {
+      url: 'https://example.com/b.jpg',
+    });
+
+    expect(prismaMock.productImage.findFirst).toHaveBeenCalledWith({
+      where: { id: 'img-1', productId: 'prod-1' },
+    });
+  });
+
+  it('updateImage lanza NotFoundException si la imagen no existe o no pertenece al producto', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.updateImage('prod-1', 'img-otro-producto', { sortOrder: 2 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prismaMock.productImage.update).not.toHaveBeenCalled();
+  });
+
+  it('updateImage traduce P2025 a NotFoundException', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue({
+      id: 'img-1',
+      productId: 'prod-1',
+    });
+    const error = new Prisma.PrismaClientKnownRequestError('Record not found', {
+      code: 'P2025',
+      clientVersion: '7.10.0',
+    });
+    prismaMock.productImage.update.mockRejectedValue(error);
+
+    await expect(
+      service.updateImage('prod-1', 'img-1', { sortOrder: 1 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('deleteImage verifica pertenencia y elimina físicamente el registro', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue({
+      id: 'img-1',
+      productId: 'prod-1',
+    });
+    prismaMock.productImage.delete.mockResolvedValue({ id: 'img-1' });
+
+    await service.deleteImage('prod-1', 'img-1');
+
+    expect(prismaMock.productImage.findFirst).toHaveBeenCalledWith({
+      where: { id: 'img-1', productId: 'prod-1' },
+    });
+    expect(prismaMock.productImage.delete).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'img-1' } }),
+    );
+  });
+
+  it('deleteImage lanza NotFoundException si la imagen no existe o no pertenece al producto', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.deleteImage('prod-1', 'img-otro-producto'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prismaMock.productImage.delete).not.toHaveBeenCalled();
+  });
+
+  it('deleteImage traduce P2025 a NotFoundException', async () => {
+    prismaMock.productImage.findFirst.mockResolvedValue({
+      id: 'img-1',
+      productId: 'prod-1',
+    });
+    const error = new Prisma.PrismaClientKnownRequestError('Record not found', {
+      code: 'P2025',
+      clientVersion: '7.10.0',
+    });
+    prismaMock.productImage.delete.mockRejectedValue(error);
+
+    await expect(service.deleteImage('prod-1', 'img-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
