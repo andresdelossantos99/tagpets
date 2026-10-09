@@ -19,6 +19,11 @@ describe('ProductPersonalizationService', () => {
     ],
   };
 
+  const disabledConfig: ProductPersonalizationConfigDto = {
+    enabled: false,
+    fields: validConfig.fields,
+  };
+
   beforeEach(() => {
     service = new ProductPersonalizationService();
   });
@@ -49,18 +54,17 @@ describe('ProductPersonalizationService', () => {
     });
 
     it('permite enabled=false conservando fields', () => {
-      const config: ProductPersonalizationConfigDto = {
-        enabled: false,
-        fields: validConfig.fields,
-      };
-
-      expect(() => service.assertValidConfig(config)).not.toThrow();
+      expect(() => service.assertValidConfig(disabledConfig)).not.toThrow();
     });
   });
 
   describe('validatePayload', () => {
     it('producto sin config + payload undefined -> válido', () => {
       expect(service.validatePayload(undefined, undefined)).toBeUndefined();
+    });
+
+    it('producto sin config + payload null -> válido', () => {
+      expect(service.validatePayload(null, null)).toBeUndefined();
     });
 
     it('producto sin config + {} -> válido', () => {
@@ -73,15 +77,83 @@ describe('ProductPersonalizationService', () => {
       ).toThrow(BadRequestException);
     });
 
-    it('enabled=false + payload con campos -> BadRequestException', () => {
-      const config: ProductPersonalizationConfigDto = {
-        enabled: false,
-        fields: validConfig.fields,
-      };
+    it('producto sin config + [] -> BadRequestException', () => {
+      expect(() => service.validatePayload(undefined, [])).toThrow(
+        BadRequestException,
+      );
+    });
 
+    it('producto sin config + número -> BadRequestException', () => {
+      expect(() => service.validatePayload(undefined, 123)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it.each([[[1]], [true], ['texto'], [{ foo: 'bar' }]])(
+      'producto sin config + %p -> BadRequestException',
+      (payload) => {
+        expect(() => service.validatePayload(undefined, payload)).toThrow(
+          BadRequestException,
+        );
+      },
+    );
+
+    it('enabled=false + payload undefined/null/{} -> válido', () => {
+      expect(
+        service.validatePayload(disabledConfig, undefined),
+      ).toBeUndefined();
+      expect(service.validatePayload(disabledConfig, null)).toBeUndefined();
+      expect(service.validatePayload(disabledConfig, {})).toBeUndefined();
+    });
+
+    it('enabled=false + payload con campos -> BadRequestException', () => {
       expect(() =>
-        service.validatePayload(config, { petName: 'Milo' }),
+        service.validatePayload(disabledConfig, { petName: 'Milo' }),
       ).toThrow(BadRequestException);
+    });
+
+    it('enabled=false + [] -> BadRequestException', () => {
+      expect(() => service.validatePayload(disabledConfig, [])).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rechaza instancias de clase (no son objetos planos)', () => {
+      class Foo {}
+
+      expect(() => service.validatePayload(undefined, new Foo())).toThrow(
+        BadRequestException,
+      );
+      expect(() => service.validatePayload(validConfig, new Foo())).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('enabled=true + payload undefined/null -> se trata como {} y falla por required', () => {
+      expect(() => service.validatePayload(validConfig, undefined)).toThrow(
+        BadRequestException,
+      );
+      expect(() => service.validatePayload(validConfig, null)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('enabled=true + número -> BadRequestException', () => {
+      expect(() => service.validatePayload(validConfig, 123)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('enabled=true + string -> BadRequestException', () => {
+      expect(() => service.validatePayload(validConfig, 'texto')).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('enabled=true + boolean -> BadRequestException', () => {
+      expect(() => service.validatePayload(validConfig, true)).toThrow(
+        BadRequestException,
+      );
     });
 
     it('campo required faltante -> BadRequestException', () => {
@@ -166,9 +238,75 @@ describe('ProductPersonalizationService', () => {
     });
 
     it('payload Array -> BadRequestException', () => {
-      expect(() => service.validatePayload(validConfig, [] as unknown)).toThrow(
+      expect(() => service.validatePayload(validConfig, [])).toThrow(
         BadRequestException,
       );
+    });
+
+    describe('keys que coinciden con propiedades de Object.prototype', () => {
+      it('field opcional con key "toString" + payload {} -> válido y no lee la propiedad heredada', () => {
+        const config: ProductPersonalizationConfigDto = {
+          enabled: true,
+          fields: [
+            { key: 'toString', label: 'Dato', type: 'text', required: false },
+          ],
+        };
+
+        const result = service.validatePayload(config, {});
+
+        expect(result).toEqual({});
+        expect(Object.keys(result ?? {})).toHaveLength(0);
+      });
+
+      it('field required con key "toString" + payload {} -> BadRequestException por faltar el campo', () => {
+        const config: ProductPersonalizationConfigDto = {
+          enabled: true,
+          fields: [
+            { key: 'toString', label: 'Dato', type: 'text', required: true },
+          ],
+        };
+
+        expect(() => service.validatePayload(config, {})).toThrow(
+          BadRequestException,
+        );
+        expect(() => service.validatePayload(config, {})).toThrow(
+          'es requerido',
+        );
+      });
+
+      it('key "toString" con propiedad propia en el payload -> válido y devuelve el valor', () => {
+        const config: ProductPersonalizationConfigDto = {
+          enabled: true,
+          fields: [
+            { key: 'toString', label: 'Dato', type: 'text', required: true },
+          ],
+        };
+
+        const result = service.validatePayload(config, { toString: 'valor' });
+
+        expect(Object.prototype.hasOwnProperty.call(result, 'toString')).toBe(
+          true,
+        );
+        expect(result?.['toString']).toBe('valor');
+      });
+
+      it('key "__proto__" con propiedad propia en el payload -> el resultado la conserva como propiedad propia', () => {
+        const config: ProductPersonalizationConfigDto = {
+          enabled: true,
+          fields: [
+            { key: '__proto__', label: 'Dato', type: 'text', required: true },
+          ],
+        };
+        const payload = Object.fromEntries([['__proto__', 'valor']]);
+
+        const result = service.validatePayload(config, payload);
+
+        expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(
+          true,
+        );
+        expect(result?.['__proto__']).toBe('valor');
+        expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      });
     });
   });
 });
