@@ -11,6 +11,8 @@ import { PublicProductsQueryDto } from './dto/public-products-query.dto';
 import { AdminProductsQueryDto } from './dto/admin-products-query.dto';
 import { CreateProductImageDto } from './dto/create-product-image.dto';
 import { UpdateProductImageDto } from './dto/update-product-image.dto';
+import { ProductPersonalizationConfigDto } from './dto/product-personalization-config.dto';
+import { ProductPersonalizationService } from './product-personalization.service';
 
 const PRODUCT_IMAGE_SELECT: Prisma.ProductImageSelect = {
   id: true,
@@ -36,6 +38,7 @@ const PRODUCT_WITH_CATEGORY_SELECT: Prisma.ProductSelect = {
   lengthCm: true,
   widthCm: true,
   heightCm: true,
+  personalizationConfig: true,
   createdAt: true,
   updatedAt: true,
   category: {
@@ -51,9 +54,27 @@ const PRODUCT_WITH_CATEGORY_SELECT: Prisma.ProductSelect = {
   },
 };
 
+function toPersonalizationConfigJson(
+  config: ProductPersonalizationConfigDto,
+): Prisma.InputJsonValue {
+  return {
+    enabled: config.enabled,
+    fields: config.fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      required: field.required,
+      ...(field.maxLength !== undefined ? { maxLength: field.maxLength } : {}),
+    })),
+  };
+}
+
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly personalization: ProductPersonalizationService,
+  ) {}
 
   async findPublicList(query: PublicProductsQueryDto) {
     const { page, limit, category, featured } = query;
@@ -125,6 +146,10 @@ export class ProductsService {
       await this.ensureCategoryExists(dto.categoryId);
     }
 
+    if (dto.personalizationConfig) {
+      this.personalization.assertValidConfig(dto.personalizationConfig);
+    }
+
     try {
       return await this.prisma.product.create({
         data: {
@@ -156,6 +181,12 @@ export class ProductsService {
               : dto.heightCm !== undefined
                 ? new Prisma.Decimal(dto.heightCm)
                 : undefined,
+          personalizationConfig:
+            dto.personalizationConfig === null
+              ? Prisma.DbNull
+              : dto.personalizationConfig !== undefined
+                ? toPersonalizationConfigJson(dto.personalizationConfig)
+                : undefined,
         },
         select: PRODUCT_WITH_CATEGORY_SELECT,
       });
@@ -170,6 +201,10 @@ export class ProductsService {
   async update(id: string, dto: UpdateProductDto) {
     if (dto.categoryId !== undefined && dto.categoryId !== null) {
       await this.ensureCategoryExists(dto.categoryId);
+    }
+
+    if (dto.personalizationConfig) {
+      this.personalization.assertValidConfig(dto.personalizationConfig);
     }
 
     try {
@@ -204,6 +239,12 @@ export class ProductsService {
               ? null
               : dto.heightCm !== undefined
                 ? new Prisma.Decimal(dto.heightCm)
+                : undefined,
+          personalizationConfig:
+            dto.personalizationConfig === null
+              ? Prisma.DbNull
+              : dto.personalizationConfig !== undefined
+                ? toPersonalizationConfigJson(dto.personalizationConfig)
                 : undefined,
         },
         select: PRODUCT_WITH_CATEGORY_SELECT,

@@ -7,6 +7,8 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import { ProductsService } from './products.service';
+import { ProductPersonalizationService } from './product-personalization.service';
+import { ProductPersonalizationConfigDto } from './dto/product-personalization-config.dto';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -32,6 +34,10 @@ describe('ProductsService', () => {
     },
   };
 
+  const personalizationMock = {
+    assertValidConfig: jest.fn(),
+  };
+
   const baseCreateDto = {
     name: 'Chapita redonda',
     slug: 'chapita-redonda',
@@ -48,13 +54,17 @@ describe('ProductsService', () => {
       providers: [
         ProductsService,
         { provide: PrismaService, useValue: prismaMock },
+        {
+          provide: ProductPersonalizationService,
+          useValue: personalizationMock,
+        },
       ],
     }).compile();
 
     service = moduleRef.get(ProductsService);
   });
 
-  // ---------- Etapa 4A (sin cambios) ----------
+  // ---------- Etapa 4A ----------
 
   it('el listado público siempre filtra active=true', async () => {
     prismaMock.product.findMany.mockResolvedValue([]);
@@ -181,7 +191,7 @@ describe('ProductsService', () => {
     );
   });
 
-  // ---------- Etapa 4B (nuevos) ----------
+  // ---------- Etapa 4B ----------
 
   it('el select de Product incluye images ordenadas por sortOrder, createdAt e id', async () => {
     prismaMock.product.findMany.mockResolvedValue([]);
@@ -336,5 +346,79 @@ describe('ProductsService', () => {
     await expect(service.deleteImage('prod-1', 'img-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  // ---------- Etapa 5 ----------
+
+  it('el select de Product incluye personalizationConfig además de images/category', async () => {
+    prismaMock.product.findMany.mockResolvedValue([]);
+    prismaMock.product.count.mockResolvedValue(0);
+
+    await service.findPublicList({ page: 1, limit: 12 });
+
+    const [findManyArgs] = prismaMock.product.findMany.mock.calls[0];
+
+    expect(findManyArgs.select.personalizationConfig).toBe(true);
+    expect(findManyArgs.select.images).toBeDefined();
+    expect(findManyArgs.select.category).toBeDefined();
+  });
+
+  it('create con personalizationConfig llama a assertValidConfig y persiste el JSON', async () => {
+    const personalizationConfig: ProductPersonalizationConfigDto = {
+      enabled: true,
+      fields: [
+        { key: 'petName', label: 'Nombre', type: 'text', required: true },
+      ],
+    };
+    prismaMock.product.create.mockResolvedValue({ id: 'uuid-1' });
+
+    await service.create({ ...baseCreateDto, personalizationConfig });
+
+    expect(personalizationMock.assertValidConfig).toHaveBeenCalledWith(
+      personalizationConfig,
+    );
+
+    const [createArgs] = prismaMock.product.create.mock.calls[0];
+    expect(createArgs.data.personalizationConfig).toEqual({
+      enabled: true,
+      fields: [
+        { key: 'petName', label: 'Nombre', type: 'text', required: true },
+      ],
+    });
+  });
+
+  it('update con personalizationConfig objeto llama a assertValidConfig', async () => {
+    const personalizationConfig: ProductPersonalizationConfigDto = {
+      enabled: true,
+      fields: [
+        { key: 'petName', label: 'Nombre', type: 'text', required: true },
+      ],
+    };
+    prismaMock.product.update.mockResolvedValue({ id: 'uuid-1' });
+
+    await service.update('uuid-1', { personalizationConfig });
+
+    expect(personalizationMock.assertValidConfig).toHaveBeenCalledWith(
+      personalizationConfig,
+    );
+  });
+
+  it('update con personalizationConfig null limpia la configuración usando Prisma.DbNull', async () => {
+    prismaMock.product.update.mockResolvedValue({ id: 'uuid-1' });
+
+    await service.update('uuid-1', { personalizationConfig: null });
+
+    const [updateArgs] = prismaMock.product.update.mock.calls[0];
+    expect(updateArgs.data.personalizationConfig).toBe(Prisma.DbNull);
+    expect(personalizationMock.assertValidConfig).not.toHaveBeenCalled();
+  });
+
+  it('update sin personalizationConfig no modifica el campo', async () => {
+    prismaMock.product.update.mockResolvedValue({ id: 'uuid-1' });
+
+    await service.update('uuid-1', { name: 'Nuevo nombre' });
+
+    const [updateArgs] = prismaMock.product.update.mock.calls[0];
+    expect(updateArgs.data.personalizationConfig).toBeUndefined();
   });
 });

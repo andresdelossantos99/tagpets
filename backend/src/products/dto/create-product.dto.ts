@@ -3,12 +3,16 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ProductPersonalizationConfigDto } from './product-personalization-config.dto';
 
 export class CreateProductDto {
   @IsOptional()
@@ -70,4 +74,10 @@ export class CreateProductDto {
   @IsNumber()
   @Min(0)
   heightCm?: number | null;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ProductPersonalizationConfigDto)
+  personalizationConfig?: ProductPersonalizationConfigDto | null;
 }
